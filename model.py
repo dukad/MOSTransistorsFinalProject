@@ -37,11 +37,39 @@ class EKV_Model:
         self.Width = Width
         self.Length = Length
         # all other EKV Model parameters here (incomplete)
-        self.ueff = None
-        self.theta = None
-        # ...
+        self.Is = None
+        self.Kappa = None
+        self.Vt0 = None
+        self.Ut = None
 
     # generic fitting function
     def fit_parameter(self):
         # 
         self.parameter = 0 # obviously edit this #
+
+    def fit_all(self):
+        """
+        Method to fit all parameters in order.
+        """
+        raise NotImplementedError("fit_all is not complete yet")
+
+    def model(self, VGB, VSB, VDB):
+        """
+        Runs the model. Uses fit values and EKV formula to return a drain current based on input voltages
+        """
+        if self.Kappa == None:
+            raise ValueError("Fit Kappa before running model")
+        if self.Is == None:
+            raise ValueError("Fit Is before running model")
+        if self.Vt0 == None:
+            raise ValueError("Fit Vt0 before runnign model")
+        if self.Ut == None:
+            raise ValueError("Fit Ut before runnign model")
+        
+        # forward current
+        IF = self.Is * np.log(1 + np.exp((self.Kappa*(VGB - self.Vt0) - VSB)/2*self.Ut))**2
+        # reverse current
+        IR = self.Is * np.log(1 + np.exp((self.Kappa*(VGB - self.Vt0) - VDB)/2*self.Ut))**2
+        # sum
+        ID = IF - IR
+        return ID

@@ -15,7 +15,13 @@ filename = file_path.split("/")[-1]
 width = float(filename.split("_")[0][1:]) * 1e-9
 length = float(filename.split("_")[1][1:]) * 1e-9
 
-print(width)
+# print(width)
 
 mosfet = EKV_Model(idvg_data, idvd_data, width, length)
+
+try:
+    mosfet.fit_all()
+except Exception as e:
+    print(e)
+
 
