@@ -22,8 +22,18 @@ phiF = phiT * np.log(Na/ni)
 
 
 
-class Model:
-    def __init__(self, Width, Length):
+class EKV_Model:
+    def __init__(self, idvg_data : np.array, idvd_data : np.array, Width : float, Length : float):
+        """
+        EKV Model Class
+        Initialize with inputs:
+        idvg data - VG sweep data of IV, np array
+        idvd data - VD sweep data of IV, np array
+        Width - float width in m
+        Length - float length in m
+        """
+        self.idvg_data = idvg_data
+        self.idvd_data = idvd_data
         self.Width = Width
         self.Length = Length
         # all other EKV Model parameters here (incomplete)
