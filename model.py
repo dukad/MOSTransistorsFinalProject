@@ -80,7 +80,6 @@ class EKV_Model:
     # kappa and Io extraction
     def extract_kappa_I0(self, vsb_val, window_size=7):
         '''This is created for finding all kappa and Io values for vsb value'''
-        # subset = self.idvg_data[self.idvg_data[:, VSBID] == vsb_val].sort_values("VGS")
         subset = self.idvg_data[self.idvg_data[:, VSBID] == vsb_val]
         subset = subset[np.argsort(subset[:, VGSID])]
 
@@ -89,10 +88,14 @@ class EKV_Model:
         ln_IDS = np.log(self.ids)
         best_r2 = -np.inf
         best_indices = None
+        MIN_SLOPE = .5
         for i in range(len(self.vgs) - window_size):
             x_seg = self.vgs[i:i + window_size]
             y_seg = ln_IDS[i:i + window_size]
             slope, intercept, r_value, _, _ = linregress(x_seg, y_seg)
+            if abs(slope) < MIN_SLOPE:
+                continue
+
             if r_value**2 > best_r2:
                 best_r2 = r_value**2
                 best_indices = (i, i + window_size)
@@ -103,8 +106,7 @@ class EKV_Model:
 
         slope, intercept, r_value, _, _ = linregress(x_lin, y_lin)
         Kappa = slope * self.Ut
-        # self.Io = np.exp(intercept)
-        Io = np.exp(intercept + Kappa * self.get_Vt(vsb_val) / self.Ut)
+        Io = np.exp(intercept)
         return Kappa, Io
     
     def extract_all_kappas_IOs(self, plot=True):
