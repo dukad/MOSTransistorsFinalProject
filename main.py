@@ -19,6 +19,6 @@ length = float(filename.split("_")[1][1:]) * 1e-9
 
 mosfet = EKV_Model(idvg_data, idvd_data, width, length)
 mosfet.fit_all()
-mosfet.plot()
+mosfet.plot(reference=True, model=True)
 # mosfet.plot_kappa()
 

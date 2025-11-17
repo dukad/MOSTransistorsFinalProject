@@ -135,7 +135,7 @@ class EKV_Model:
         # self.Is = ios[0]
         
 
-    def fit_Is(self, plot =True):
+    def fit_Is(self, plot=False):
         """
         fitting Is and corresponding terms
         """
@@ -180,7 +180,9 @@ class EKV_Model:
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_theta_u0(Vgs, Vsb, u0, theta):
-            return u0 / (1 + theta * (Vgs - self.get_Vt(Vsb)))
+            Vt = self.get_Vt(Vsb)
+            deltaV = np.log1p(np.exp(Vgs - Vt))
+            return u0 / (1 + theta * deltaV)
         
         func = lambda vgs, u0, theta: ueff_from_theta_u0(vgs, 0.0, u0, theta)
         popt, pcov = curve_fit(func, VGS, ueffs, p0=[3e-4, 0.1])
@@ -269,7 +271,7 @@ class EKV_Model:
 
         # lets just run this optimization many times to improve values
         # for file in os.listdir(dir := "MOSdata/ID-VGS"):
-        for i in range(10):
+        for i in range(100):
             u0_opt, theta_opt = refine_u0_theta(u0_opt, theta_opt)
             alpha_opt = get_alpha()
         self.alpha = alpha_opt
@@ -312,8 +314,10 @@ class EKV_Model:
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_thetaB(Vgs, Vsb, u0, theta, thetaB):
-            return u0 / (1 + theta * (Vgs - self.get_Vt(Vsb)) + thetaB*Vsb)
-
+            Vt = self.get_Vt(Vsb)
+            deltaV = np.log1p(np.exp(Vgs - Vt))
+            return u0 / (1 + theta * deltaV + thetaB*Vsb)
+        self.theta = 0
         func = lambda Vsb, thetaB: ueff_from_thetaB(vgsfilter, Vsb, self.u0, self.theta, thetaB)
         # print(len(vsbs), len(ueffs))
         popt, pcov = curve_fit(func, vsbs, ueffs, bounds=[-100, 100])
@@ -327,8 +331,10 @@ class EKV_Model:
         if plot:
             plt.figure()
             plt.title("theta B fit")
+            # plt.plot(vsbs, self.get_Vt(vsbs), label="VTs")
             plt.plot(vsbs, ueffs, label="scraped ueffs", linestyle='--')
-            plt.plot(vsbs, func(vsbs, thetaB), label="ueffs from func")
+        
+            plt.plot(vsbs, func(vsbs, 0), label="ueffs from func")
             plt.legend()
             plt.show()
         
@@ -347,7 +353,7 @@ class EKV_Model:
         minID = min(ID)
         diff = maxID - minID
 
-        mask = (ID > 0.05*diff + minID) & (ID < 0.3*diff + minID)
+        mask = (ID > 0.05*diff + minID) & (ID < 0.2*diff + minID)
         VGS_fit = VGS[mask]
         ID_fit = ID[mask]
         # linearize this line
@@ -368,29 +374,49 @@ class EKV_Model:
             plt.legend()
             plt.grid()
             plt.show()
+
+
+
         return Vt
 
     def fit_Vts(self, plot=False):
         # for now
         # loop through VSBs, at one given VDS (max VDS, arbitrary)
-        vds = 0.1
-        mask_vds = (self.idvg_data[:, VDSID] == vds)
-        masked_array = self.idvg_data[mask_vds] # now only values at a given vds
-        # print(masked_array)
-        vsbs = np.unique(masked_array[:, VSBID])
-        # print(f"VSBS: {list(vsbs)}")
-        Vts = []
-        for vsb in vsbs:
-            Vts.append(self.fit_Vt(vsb=vsb, vds=vds))
+        # vds = 0.
+        Vdss = [3.3, 0.1]
+        vts_mat = []
         if plot:
-            # show the Vts over Vsb
             plt.figure()
-            plt.plot(vsbs, Vts, label="Vts")
-            plt.title("Vt over Vsb")
-            plt.xlabel("Vsb (V)")
-            plt.ylabel("Vt (V)")
-            plt.legend()
-            plt.show()
+        for vds in Vdss:
+            mask_vds = (self.idvg_data[:, VDSID] == vds)
+            masked_array = self.idvg_data[mask_vds] # now only values at a given vds
+            # print(masked_array)
+            vsbs = np.unique(masked_array[:, VSBID])
+            # print(f"VSBS: {list(vsbs)}")
+            Vts = []
+            for vsb in vsbs:
+                Vts.append(self.fit_Vt(vsb=vsb, vds=vds))
+            if plot:
+                # show the Vts over Vsb
+                plt.plot(vsbs, Vts, label=f"Vts at VDS = {vds}")
+                plt.title("Vt over Vsb")
+                plt.xlabel("Vsb (V)")
+                plt.ylabel("Vt (V)")
+                plt.legend()
+                
+            vts_mat.append(Vts)
+        plt.show()
+        # check the scaling factor in between VTs
+        dibls = []
+        voltage_diff = abs(Vdss[0] - Vdss[1])
+        print(vts_mat)
+        for vt1, vt2 in zip(vts_mat[0], vts_mat[1]):
+            diff = vt1 - vt2
+            dibls.append(diff / voltage_diff)
+
+        if plot:
+            print(dibls)
+            # we have concluded there is no DIBL effect
 
         # now fit the variables to the Vt function
         # guess
@@ -468,14 +494,8 @@ class EKV_Model:
             raise ValueError("Fit Kappa before running model")
         # if self.Vt0 == None:
         #     raise ValueError("Fit Vt0 before runnign model")
-        # self.theta = 0
-        # self.alpha = 0
-        # self.thetaB = 0
-        # forward current
-        # now adapted to use EKV model
-        # forward current
         # assume VGB = Vg - Vb, VSB = Vs - Vb, VDB = Vd - Vb
-        self.thetaB = 0
+        # self.thetaB = 0 # CHANGE THIS LATER
         Vgs = VGB - VSB
         Vgd = VGB - VDB
         Vds = VDB + VSB
@@ -485,7 +505,7 @@ class EKV_Model:
 
         # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
         IS = 2 * ueff * Cox * (self.W / self.L) * (self.Ut ** 2) / self.Kappa
-        IS *= (1 + self.alpha * (Vds))
+        IS *= (1 - self.alpha * (Vds) / 2)
 
         # softplus = ln(1 + exp(x)) implemented via log1p(exp(x))
         argF = (self.Kappa * (Vgs - vt)) / (2.0 * self.Ut)
@@ -500,7 +520,7 @@ class EKV_Model:
         ID = IF - IR
         return ID
     
-    def plot(self):
+    def plot(self, reference=True, model=True):
         """
         Plots model data against reference data
         """
@@ -521,18 +541,20 @@ class EKV_Model:
                 mask_vgs = self.idvd_data[:, VGSID] == vgs
                 mask = mask_vgs & mask_vsb
                 ##### plot reference data
-                axs[0, i].plot(
-                    self.idvd_data[mask][:, VDSID],
-                    self.idvd_data[mask][:, IDSID],
-                    label=f"Ref VGS: {vgs}",
-                    linestyle = '--'
-                )
+                if reference:
+                    axs[0, i].plot(
+                        self.idvd_data[mask][:, VDSID],
+                        self.idvd_data[mask][:, IDSID],
+                        label=f"Ref VGS: {vgs}",
+                        linestyle = '--'
+                    )
                 ###### plot model data
-                axs[0, i].plot(
-                    vds_array,
-                    self.model(vgs + vsb, vsb, vdb_array),
-                    label=f"VGS: {vgs}"
-                )
+                if model:
+                    axs[0, i].plot(
+                        vds_array,
+                        self.model(vgs + vsb, vsb, vdb_array),
+                        label=f"VGS: {vgs}"
+                    )
             axs[0, i].legend(
                 loc="center left",
                 bbox_to_anchor=(1.02, 0.5),
@@ -553,19 +575,20 @@ class EKV_Model:
                 vgb_array = vgs_array + vsb
                 mask_vsb = self.idvg_data[:, VSBID] == vsb
                 mask = mask_vds & mask_vsb
-
-                axs[1, i].plot(
-                    self.idvg_data[mask][:, VGSID],
-                    self.idvg_data[mask][:, IDSID],
-                    label=f"Ref VDS: {vds}",
-                    linestyle = '--'
-                )
+                if reference:
+                    axs[1, i].plot(
+                        self.idvg_data[mask][:, VGSID],
+                        self.idvg_data[mask][:, IDSID],
+                        label=f"Ref VDS: {vds}",
+                        linestyle = '--'
+                    )
                 ### model data ######
-                axs[1, i].plot(
-                    vgs_array,
-                    self.model(vgb_array, vsb, vds + vsb),
-                    label=f"VSB: {vsb}"
-                )
+                if model:
+                    axs[1, i].plot(
+                        vgs_array,
+                        self.model(vgb_array, vsb, vds + vsb),
+                        label=f"VSB: {vsb}"
+                    )
             axs[1, i].legend(
                 loc="center left",
                 bbox_to_anchor=(1.02, 0.5),
