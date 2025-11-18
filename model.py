@@ -141,10 +141,10 @@ class EKV_Model:
             vt = self.get_Vt(VSB)
             # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
             IS = 2 * ueff * Cox * (self.W / self.L) * (self.Ut ** 2) / self.Kappa
-
+            VDB = Vds + VSB
             # softplus = ln(1 + exp(x)) implemented via log1p(exp(x))
             argF = (self.Kappa * (VGS + VSB - vt) - VSB) / (2.0 * self.Ut)
-            argR = (self.Kappa * (VGS + VSB - vt) - VDS - VSB) / (2.0 * self.Ut)
+            argR = (self.Kappa * (VGS + VSB - vt) - (VDB)) / (2.0 * self.Ut)
 
             softF = np.log(1 + np.exp(argF))
             softR = np.log(1 + np.exp(argR))
@@ -276,8 +276,8 @@ class EKV_Model:
         print(thetaB)
         print(f"thetaB*: {thetaB:.6g} V^-1")
 
-        # self.thetaB = thetaB
-        self.thetaB=  0 #######################################
+        self.thetaB = thetaB
+        # self.thetaB=  0 #######################################
         
         ## PLOT TO CHECK
         if plot:
@@ -295,7 +295,7 @@ class EKV_Model:
 
     def fit_Vt(self,vsb=0, vds=0.1,plot=False):
         # load data from VGS sweeps where VSB = -
-        mask = (self.idvg_data[:, VSBID] == vsb) & (self.idvg_data[:, VDSID] == 0.1)
+        mask = (self.idvg_data[:, VSBID] == vsb) & (self.idvg_data[:, VDSID] == vds)
         VGS = self.idvg_data[:, VGSID][mask]
         ID = self.idvg_data[:, IDSID][mask]
         # take data close to intercept
@@ -315,7 +315,8 @@ class EKV_Model:
         # print(f"slope: {slope}, intercept: {intercept}")
         # find index where ID = 0
         idx = np.where(ID_fit >= 0)[0][0]
-        Vt = VGS_fit[idx]
+        Vt = -intercept / slope
+
         if plot:
             plt.figure()
             plt.title(f"Vt Extrapolation for VSB = {vsb}")
@@ -326,9 +327,6 @@ class EKV_Model:
             plt.legend()
             plt.grid()
             plt.show()
-
-
-
         return Vt
 
     def fit_Vts(self, plot=False):
@@ -444,6 +442,7 @@ class EKV_Model:
         """
         # generate kappas for each unique VSB
         self.fit_Vts()
+        print(self.gamma)
         self.extract_all_kappas_IOs() # this creates self.kappas
         self.fit_Is()
         
@@ -461,8 +460,7 @@ class EKV_Model:
         # assume VGB = Vg - Vb, VSB = Vs - Vb, VDB = Vd - Vb
         # self.thetaB = 0 # CHANGE THIS LATER
         Vgs = VGB - VSB
-        Vgd = VGB - VDB
-        Vds = VDB + VSB
+        Vds = VDB - VSB
 
         vt = self.get_Vt(VSB)
         ueff = self.get_ueff(Vgs, VSB)   # pass Vgs rather than VGB+VSB
@@ -472,8 +470,8 @@ class EKV_Model:
         IS *= (1 + self.lambda_par*(Vds))
 
         # softplus = ln(1 + exp(x)) implemented via log1p(exp(x))
-        argF = (self.Kappa * (Vgs - vt) - VSB) / (2.0 * self.Ut)
-        argR = (self.Kappa * (Vgs - vt) - VDB) / (2.0 * self.Ut)
+        argF = ((self.Kappa * (VGB - vt)) - VSB) / (2.0 * self.Ut)
+        argR = ((self.Kappa * (VGB - vt)) - VDB) / (2.0 * self.Ut)
 
         softF = np.log(1 + np.exp(argF))
         softR = np.log(1 + np.exp(argR))
@@ -493,6 +491,7 @@ class EKV_Model:
         """
         Plots model data against reference data
         """
+        
         ############## PLOTTING ID VDS ###################
         unique_vgss = np.unique(self.idvd_data[:, VGSID])
         unique_vsbs = np.unique(self.idvd_data[:, VSBID])
