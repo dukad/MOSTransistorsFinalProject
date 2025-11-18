@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
-from scipy.optimize import curve_fit, minimize_scalar, brentq
+from scipy.optimize import curve_fit, minimize_scalar, brentq, least_squares
 
 
 
@@ -73,6 +73,7 @@ class EKV_Model:
         self.Ut = phiT
         self.cox = 3.45e-11 / 10.5e-9 # eox/toc
         self.vsat = 9e4 #6×10⁴ → 9×10⁴ m/s
+        self.lambda_par = 0
     
     # kappa and Io extraction
     def extract_kappa_I0(self, vsb_val, window_size=7):
@@ -132,58 +133,97 @@ class EKV_Model:
         # self.Is = ios[0]
         
 
-    def fit_Is(self, plot=False):
+    def fit_Is(self, plot=True):
         """
         fitting Is and corresponding terms
         """
+        def Idsn(ueff, VGS, VSB, Vds):
+            vt = self.get_Vt(VSB)
+            # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
+            IS = 2 * ueff * Cox * (self.W / self.L) * (self.Ut ** 2) / self.Kappa
+
+            # softplus = ln(1 + exp(x)) implemented via log1p(exp(x))
+            argF = (self.Kappa * (VGS + VSB - vt) - VSB) / (2.0 * self.Ut)
+            argR = (self.Kappa * (VGS + VSB - vt) - VDS - VSB) / (2.0 * self.Ut)
+
+            softF = np.log(1 + np.exp(argF))
+            softR = np.log(1 + np.exp(argR))
+
+            IF = IS * (softF ** 2)
+            IR = IS * (softR ** 2)
+
+            ID = IF - IR
+            return ID
+        
+        def get_ueff(ID_meas, VGS, Vsb, Vds):
+            def f(ueff):
+                return Idsn(ueff, VGS, Vsb, Vds) - ID_meas
+            # Bracketed root find (robust)
+            res = least_squares(f, x0=0.25)
+            # print(F"Difference = {f(res.x[0]) - ID_meas}")
+            return res.x[0] 
+
         # Overall process -- use prefit K terms, fit Is terms
         # Using formula for Is, fit u0
         # using other data VSB, VDS != 0 , fit for theta terms
         if self.Kappa == None:
             raise ValueError("Define K first")
         # fit ID-VGS data, only in nonsaturation
-        VDS = 0.1
+        VDS = 0.1 # nonsat
         VSB = 0
         mask = (self.idvg_data[:, VDSID ] == VDS) & (self.idvg_data[:, VSBID] == VSB)
         VGS = self.idvg_data[:, VGSID][mask]
         ID = self.idvg_data[:, IDSID][mask]
-        mask2 = (VGS > self.get_Vt(VSB)*2) # only in nonsat strong inversion
+        mask2 = (VGS > (filter := self.get_Vt(VSB)*1.5)) # only in nonsat strong inversion
         VGS = VGS[mask2]
         ID = ID[mask2]
 
-
-        # reverse calculate an array of IS values 
-        def model_inverse(VGB, VSB, VDB, ID):
-            # drain current / everything inside the log squared = Is
-            vt = self.get_Vt(VSB)
-            def L(x):
-                return np.log(1 + np.exp((self.Kappa*(VGB - vt) - x) / (2*self.Ut)))
-            LF = L(VSB)**2
-            LR = L(VDB)**2
-            denom = LF - LR
-            IS = ID / denom
-            return IS
-        
-        IS_array = model_inverse(VGS, VSB, VDS, ID)
-
         # directly convert this to an array of ueffs. We are assumign no channel length modulation or vsat effects here
-        ueffs = IS_array*self.Kappa / (2*(self.W/self.L)*Cox*(self.Ut**2))
+        # ueffs = IS_array*self.Kappa / (2*(self.W/self.L)*Cox*(self.Ut**2))
+        ueffs = []
+        # print(VGS)
+        for i in range(len(VGS)):
+            ueff = get_ueff(ID[i], VGS[i], VSB, VDS)
+            ueffs.append(ueff)
+        ueffs = np.array(ueffs)
+
+        if plot:
+            plt.figure()
+            plt.title("Checking ueffs array")
+            plt.plot(VGS, Idsn(ueffs, VGS, VSB, VDS), label="ueff data")
+            plt.plot(VGS, ID, label = "data")
+            plt.legend()
+            plt.show()
+
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_theta_u0(Vgs, Vsb, u0, theta):
             
             Vt = self.get_Vt(Vsb)
             # print(Vgs - Vt)
-            deltaV = np.log1p(np.exp(Vgs - Vt))
+            deltaV = (Vgs - Vt)
             # print(u0 / (1 + theta * deltaV))
             return u0 / (1 + theta * deltaV)
         
         func = lambda vgs, u0, theta: ueff_from_theta_u0(vgs, 0.0, u0, theta)
-        popt, pcov = curve_fit(func, VGS, ueffs, p0=[0.07, 0.4])
+        popt, pcov = curve_fit(func, VGS, ueffs, p0=[0.05, 0.4])
         u0_opt, theta_opt = popt
         init_values = popt
         print(f"u0*: {u0_opt:.6g} m^2/Vs")
         print(f"theta*: {theta_opt:.6g} V^-1")
+        self.u0 = u0_opt
+        self.theta = theta_opt
+        self.thetaB = 0
+        plot_vgs = self.idvg_data[:, VGSID][mask]
+        if plot:
+            plt.figure()
+            plt.plot(plot_vgs, self.idvg_data[:, IDSID][mask])
+            plt.plot(plot_vgs, self.model(plot_vgs, 0, 0.1))
+            plt.title("Model based on fit u0 and theta")
+            plt.xlabel("VGS")
+            plt.ylabel("ID")
+            plt.axvline(filter)
+            plt.show()
 
         if plot:
             plt.figure()
@@ -194,100 +234,6 @@ class EKV_Model:
             plt.title("Fitting U0 and theta")
             plt.legend()
             plt.show()
-
-        # ################################### determine alpha using ID-VDS data #################################
-
-
-        def Vds_prime(Vgs, Vt, alpha):
-            return (Vgs - Vt) / alpha
-
-        def Idsn_withalpha(ueff, VGS, Vsb, Vds, alpha):
-            # using linear region approximation to fit
-            return (self.W/self.L) * ueff * Cox * (max((VGS - self.get_Vt(Vsb)), 0)*Vds - (alpha/2)*Vds**2)
-
-        def get_alpha():
-            
-            # load ID-VDS data
-            
-            VGS = 3.4
-            mask = (self.idvd_data[:, VGSID] == VGS) & (self.idvd_data[:, VSBID] == 0)
-            VDS = self.idvd_data[:, VDSID]
-            ID = self.idvd_data[:, VDSID]
-            # we need to only use data in non-saturation, so lets mask the data
-            mask = (VDS < Vds_prime(VGS, self.get_Vt(0), 0))  & (VDS > 0.05)
-            VDS_fit = VDS[mask]
-            ID_fit = ID[mask]
-            ueff = ueff_from_theta_u0(VGS, 0.0, u0_opt, theta_opt)
-
-            # curve fit to get alpha
-            def fit_func(vds, alpha):
-                return Idsn_withalpha(ueff, VGS, 0.0, vds, alpha)
-
-            popt, pcov = curve_fit(fit_func, VDS_fit, ID_fit, p0=[0.1], bounds=([0], [np.inf]))
-            alpha_opt = popt[0]
-            return alpha_opt
-
-        self.alpha = get_alpha()
-        print(f"alpha*: {self.alpha:.6g} V^-1")
-        # maybe add something to plot alpha here to visually check
-
-        ############################ Refine u0 and theta now using alpha ############################
-        def get_ueff_withalpha(ID_meas, VGS, Vsb, Vds, alpha,
-                        ueff_min=1e-20, ueff_max=1e4):
-            def f(ueff):
-                return Idsn_withalpha(ueff, VGS, Vsb, Vds, alpha) - ID_meas
-            # Bracketed root find (robust)
-            return brentq(f, ueff_min, ueff_max)
-
-        def refine_u0_theta(u0, theta, Vsb=0, plot2=False):
-            VGS = self.idvg_data[:, VGSID]
-            VSB = self.idvg_data[:, VSBID]
-            ID = self.idvg_data[:, IDSID]
-            VDS_target = 0.1
-            VDS = self.idvg_data[:, VDSID]
-            mask3 = (VDS == VDS_target)
-            mask4 = (VSB == 0)
-            # we need to only use data in non-saturation, so lets mask the data
-            mask2 = (VGS > self.get_Vt(0)*2) & mask3 & mask4  # only in nonsat
-            VGS_fit = VGS[mask2]
-            ID_fit = ID[mask2]
-                
-            ueffs = []
-            for vgs, id in zip(VGS_fit, ID_fit):
-                vds = 0.1
-                ueff = get_ueff_withalpha(id, vgs, Vsb, vds, self.alpha)
-                ueffs = np.append(ueffs, ueff)
-
-            # now curve fit ueffs to get u0 and theta
-            func = lambda vgs, u0, theta: ueff_from_theta_u0(vgs, Vsb, u0, theta)
-            # print(np.size(VGS_fit), np.size(ueffs))
-            popt, pcov = curve_fit(func, VGS_fit, ueffs, p0=[u0, theta])
-            u0_opt, theta_opt = popt
-
-            if plot2:
-                plt.figure()
-                plt.plot(VGS_fit, ueffs, label="ueff data")
-                plt.plot(VGS_fit, ueff_from_theta_u0(VGS_fit, 0.0, u0_opt, theta_opt), label="fit")
-                plt.xlabel('VGS')
-                plt.ylabel('ueff')
-                plt.title("Fitting U0 and theta, refined")
-                plt.legend()
-                plt.show()
-
-            return u0_opt, theta_opt
-
-        # lets just run this optimization many times to improve values
-        for i in range(10):
-            u0_opt, theta_opt = refine_u0_theta(u0_opt, theta_opt)
-            alpha_opt = get_alpha()
-        self.alpha = alpha_opt
-        self.u0 = u0_opt 
-        self.theta = theta_opt
-
-        print(f"Refined u0*: {u0_opt:.6g} m^2/Vs")
-        print(f"Refined theta*: {theta_opt:.6g} V^-1")
-
-        print(f"Refined alpha : {alpha_opt}")
 
         vgsfilter = 3.6
         vdsfilter = 0.1 # lets keep this in linear region
@@ -305,33 +251,33 @@ class EKV_Model:
             mask2 = (VGS == vgsfilter) & (VDS == vdsfilter)
             Ids.append(ID[mask2])
 
-        # if plot:
-        #     plt.figure()
-        #     plt.plot(vsbs, Ids, label="Ids vs vsbs")
-        #     plt.title("Drain current at vds and vgs target over vsb")
-        #     plt.ylabel("Ids")
-        #     plt.xlabel("Vsb")
-        #     plt.show()
-            # plt.figure()
+        if plot:
+            plt.figure()
+            plt.plot(vsbs, Ids, label="Ids vs vsbs")
+            plt.title("Drain current at vds and vgs target over vsb")
+            plt.ylabel("Ids")
+            plt.xlabel("Vsb")
+            plt.show()
 
         # Get what the ueff should be based on this data
         ueffs = []
         for vsb, id in zip(vsbs, Ids):
-            ueffs.append(get_ueff_withalpha(id, vgsfilter, vsb, vdsfilter, self.alpha))
+            ueffs.append(get_ueff(id, vgsfilter, vsb, vdsfilter))
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_thetaB(Vgs, Vsb, u0, theta, thetaB):
-            Vt = self.get_Vt(Vsb)
-            deltaV = Vgs - Vt
-            return u0 / (1 + (theta*deltaV) + (thetaB*Vsb))
+            return self.u0 / (1 + (self.theta * (Vgs - self.get_Vt(Vsb))) + (thetaB*Vsb))
+        
         func = lambda Vsb, thetaB: ueff_from_thetaB(vgsfilter, Vsb, self.u0, self.theta, thetaB)
         # print(len(vsbs), len(ueffs))
-        popt, pcov = curve_fit(func, vsbs, ueffs, bounds=[-100, 100])
+        # print(ueffs)
+        popt, pcov = curve_fit(func, vsbs, ueffs, bounds=([-100], [100]))
         thetaB = popt[0]
         print(thetaB)
         print(f"thetaB*: {thetaB:.6g} V^-1")
 
-        self.thetaB = thetaB
+        # self.thetaB = thetaB
+        self.thetaB=  0 #######################################
         
         ## PLOT TO CHECK
         if plot:
@@ -359,7 +305,7 @@ class EKV_Model:
         minID = min(ID)
         diff = maxID - minID
 
-        mask = (ID > 0.05*diff + minID) & (ID < 0.2*diff + minID)
+        mask = (ID > 0.05*diff + minID) & (ID < 0.3*diff + minID)
         VGS_fit = VGS[mask]
         ID_fit = ID[mask]
         # linearize this line
@@ -411,11 +357,12 @@ class EKV_Model:
                 plt.legend()
                 
             vts_mat.append(Vts)
-        plt.show()
+        if plot:
+            plt.show()
         # check the scaling factor in between VTs
         dibls = []
         voltage_diff = abs(Vdss[0] - Vdss[1])
-        print(vts_mat)
+        # print(vts_mat)
         for vt1, vt2 in zip(vts_mat[0], vts_mat[1]):
             diff = vt1 - vt2
             dibls.append(diff / voltage_diff)
@@ -501,7 +448,7 @@ class EKV_Model:
         self.fit_Is()
         
     def get_ueff(self, Vgs, Vsb):
-        return self.u0 / (1 + self.theta * (Vgs - self.get_Vt(Vsb)) + self.thetaB*Vsb)
+        return self.u0 / (1 + (self.theta * (Vgs - self.get_Vt(Vsb))) + (self.thetaB*Vsb))
 
     def model(self, VGB, VSB, VDB):
         """
@@ -518,20 +465,18 @@ class EKV_Model:
         Vds = VDB + VSB
 
         vt = self.get_Vt(VSB)
-        ueff_old = self.get_ueff(Vgs, VSB)   # pass Vgs rather than VGB+VSB
-        v_over = abs(Vds) / self.L
-        ueff = ueff_old / (1 + v_over / self.vsat)
+        ueff = self.get_ueff(Vgs, VSB)   # pass Vgs rather than VGB+VSB
 
         # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
         IS = 2 * ueff * Cox * (self.W / self.L) * (self.Ut ** 2) / self.Kappa
-        IS *= (1 - self.alpha * (Vds) / 2)
+        IS *= (1 + self.lambda_par*(Vds))
 
         # softplus = ln(1 + exp(x)) implemented via log1p(exp(x))
-        argF = (self.Kappa * (Vgs - vt)) / (2.0 * self.Ut)
-        argR = (self.Kappa * (Vgd - vt)) / (2.0 * self.Ut)
+        argF = (self.Kappa * (Vgs - vt) - VSB) / (2.0 * self.Ut)
+        argR = (self.Kappa * (Vgs - vt) - VDB) / (2.0 * self.Ut)
 
-        softF = np.log1p(1 + np.exp(argF))
-        softR = np.log1p(1 + np.exp(argR))
+        softF = np.log(1 + np.exp(argF))
+        softR = np.log(1 + np.exp(argR))
 
         IF = IS * (softF ** 2)
         IR = IS * (softR ** 2)
@@ -548,14 +493,12 @@ class EKV_Model:
         """
         Plots model data against reference data
         """
-
         ############## PLOTTING ID VDS ###################
         unique_vgss = np.unique(self.idvd_data[:, VGSID])
         unique_vsbs = np.unique(self.idvd_data[:, VSBID])
         vdsmax = np.max(self.idvd_data[:, VDSID])
         vdmin = np.min(self.idvd_data[:, VDSID])
         vds_array = np.linspace(vdmin, vdsmax, 1000)
-        
         fig, axs = plt.subplots(2, len(unique_vsbs), figsize=(15, 8))
         
         for i, vsb in enumerate(unique_vsbs):
