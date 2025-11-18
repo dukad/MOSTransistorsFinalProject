@@ -145,49 +145,45 @@ class EKV_Model:
         if self.Kappa == None:
             raise ValueError("Define K first")
         # fit ID-VGS data, only in nonsaturation
-        mask = (self.idvg_data[:, VDSID ] == 0.1) & (self.idvg_data[:, VSBID] == 0)
+        VDS = 0.1
+        VSB = 0
+        mask = (self.idvg_data[:, VDSID ] == VDS) & (self.idvg_data[:, VSBID] == VSB)
         VGS = self.idvg_data[:, VGSID][mask]
         ID = self.idvg_data[:, IDSID][mask]
-        mask2 = (VGS > self.get_Vt(0) + 0.7) # only in nonsat
+        mask2 = (VGS > self.get_Vt(VSB)*2) # only in nonsat strong inversion
         VGS = VGS[mask2]
         ID = ID[mask2]
 
 
         # reverse calculate an array of IS values 
         def model_inverse(VGB, VSB, VDB, ID):
+            # drain current / everything inside the log squared = Is
             vt = self.get_Vt(VSB)
-
             def L(x):
                 return np.log(1 + np.exp((self.Kappa*(VGB - vt) - x) / (2*self.Ut)))
-
             LF = L(VSB)**2
             LR = L(VDB)**2
             denom = LF - LR
-
-            # element-wise check
-            near_zero = np.isclose(denom, 0.0)
-
-            if np.any(near_zero):
-                raise ValueError("Some denominator values are zero; IS undefined for those bias points.")
-
             IS = ID / denom
             return IS
         
-        IS_array = model_inverse(VGS, 0, 0.1, ID)
+        IS_array = model_inverse(VGS, VSB, VDS, ID)
 
-        # directly convert this to an array of ueffs 
-        ueffs = IS_array*self.Kappa / (2*(self.W/self.L)*Cox*self.Ut**2)
+        # directly convert this to an array of ueffs. We are assumign no channel length modulation or vsat effects here
+        ueffs = IS_array*self.Kappa / (2*(self.W/self.L)*Cox*(self.Ut**2))
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_theta_u0(Vgs, Vsb, u0, theta):
+            
             Vt = self.get_Vt(Vsb)
+            # print(Vgs - Vt)
             deltaV = np.log1p(np.exp(Vgs - Vt))
+            # print(u0 / (1 + theta * deltaV))
             return u0 / (1 + theta * deltaV)
         
         func = lambda vgs, u0, theta: ueff_from_theta_u0(vgs, 0.0, u0, theta)
-        popt, pcov = curve_fit(func, VGS, ueffs, p0=[3e-4, 0.1])
+        popt, pcov = curve_fit(func, VGS, ueffs, p0=[0.07, 0.4])
         u0_opt, theta_opt = popt
-
         init_values = popt
         print(f"u0*: {u0_opt:.6g} m^2/Vs")
         print(f"theta*: {theta_opt:.6g} V^-1")
@@ -195,7 +191,9 @@ class EKV_Model:
         if plot:
             plt.figure()
             plt.plot(VGS, ueffs, label="ueff data")
-            plt.plot(VGS, ueff_from_theta_u0(VGS, 0.0, u0_opt, theta_opt), label="fit")
+            plt.plot(VGS, ueff_from_theta_u0(VGS, VSB, u0_opt, theta_opt), label="fit")
+            plt.xlabel('VGS')
+            plt.ylabel('ueff')
             plt.title("Fitting U0 and theta")
             plt.legend()
             plt.show()
@@ -219,8 +217,7 @@ class EKV_Model:
             VDS = self.idvd_data[:, VDSID]
             ID = self.idvd_data[:, VDSID]
             # we need to only use data in non-saturation, so lets mask the data
-            # assume alpha = 2 so we dont curve fit improperly
-            mask = (VDS < Vds_prime(VGS, self.get_Vt(0), 1)) & (VDS > 0.05)
+            mask = (VDS < Vds_prime(VGS, self.get_Vt(0), 0))  & (VDS > 0.05)
             VDS_fit = VDS[mask]
             ID_fit = ID[mask]
             ueff = ueff_from_theta_u0(VGS, 0.0, u0_opt, theta_opt)
@@ -245,19 +242,21 @@ class EKV_Model:
             # Bracketed root find (robust)
             return brentq(f, ueff_min, ueff_max)
 
-        def refine_u0_theta(u0, theta, Vsb=0):
+        def refine_u0_theta(u0, theta, Vsb=0, plot2=False):
             VGS = self.idvg_data[:, VGSID]
+            VSB = self.idvg_data[:, VSBID]
             ID = self.idvg_data[:, IDSID]
+            VDS_target = 0.1
+            VDS = self.idvg_data[:, VDSID]
+            mask3 = (VDS == VDS_target)
+            mask4 = (VSB == 0)
             # we need to only use data in non-saturation, so lets mask the data
-            mask2 = (VGS > self.get_Vt(0) + 0.7) # only in nonsat
+            mask2 = (VGS > self.get_Vt(0)*2) & mask3 & mask4  # only in nonsat
             VGS_fit = VGS[mask2]
             ID_fit = ID[mask2]
                 
             ueffs = []
             for vgs, id in zip(VGS_fit, ID_fit):
-                if isinstance(id, np.ndarray):
-                    id = id[0]
-                vds = min(0.1, Vds_prime(vgs, self.get_Vt(Vsb), self.alpha))
                 vds = 0.1
                 ueff = get_ueff_withalpha(id, vgs, Vsb, vds, self.alpha)
                 ueffs = np.append(ueffs, ueff)
@@ -265,24 +264,33 @@ class EKV_Model:
             # now curve fit ueffs to get u0 and theta
             func = lambda vgs, u0, theta: ueff_from_theta_u0(vgs, Vsb, u0, theta)
             # print(np.size(VGS_fit), np.size(ueffs))
-            popt, pcov = curve_fit(func, VGS_fit, ueffs, p0=[u0, theta], bounds=([0, 0.005], [np.inf, np.inf]))
+            popt, pcov = curve_fit(func, VGS_fit, ueffs, p0=[u0, theta])
             u0_opt, theta_opt = popt
+
+            if plot2:
+                plt.figure()
+                plt.plot(VGS_fit, ueffs, label="ueff data")
+                plt.plot(VGS_fit, ueff_from_theta_u0(VGS_fit, 0.0, u0_opt, theta_opt), label="fit")
+                plt.xlabel('VGS')
+                plt.ylabel('ueff')
+                plt.title("Fitting U0 and theta, refined")
+                plt.legend()
+                plt.show()
+
             return u0_opt, theta_opt
 
         # lets just run this optimization many times to improve values
-        # for file in os.listdir(dir := "MOSdata/ID-VGS"):
-        for i in range(100):
+        for i in range(10):
             u0_opt, theta_opt = refine_u0_theta(u0_opt, theta_opt)
             alpha_opt = get_alpha()
         self.alpha = alpha_opt
-        self.u0 = u0_opt
+        self.u0 = u0_opt 
         self.theta = theta_opt
 
         print(f"Refined u0*: {u0_opt:.6g} m^2/Vs")
         print(f"Refined theta*: {theta_opt:.6g} V^-1")
 
         print(f"Refined alpha : {alpha_opt}")
-
 
         vgsfilter = 3.6
         vdsfilter = 0.1 # lets keep this in linear region
@@ -300,24 +308,25 @@ class EKV_Model:
             mask2 = (VGS == vgsfilter) & (VDS == vdsfilter)
             Ids.append(ID[mask2])
 
-        if plot:
-            plt.figure()
-            plt.plot(vsbs, Ids, label="Ids vs vsbs")
-            plt.title("Drain current at vds and vgs target over vsb")
-            plt.show()
+        # if plot:
+        #     plt.figure()
+        #     plt.plot(vsbs, Ids, label="Ids vs vsbs")
+        #     plt.title("Drain current at vds and vgs target over vsb")
+        #     plt.ylabel("Ids")
+        #     plt.xlabel("Vsb")
+        #     plt.show()
             # plt.figure()
 
         # Get what the ueff should be based on this data
         ueffs = []
         for vsb, id in zip(vsbs, Ids):
-            ueffs.append(get_ueff_withalpha(id, vgsfilter, vsb, vdsfilter, alpha_opt))
+            ueffs.append(get_ueff_withalpha(id, vgsfilter, vsb, vdsfilter, self.alpha))
 
         # now lets curve fit ueffs to get u0 and theta
         def ueff_from_thetaB(Vgs, Vsb, u0, theta, thetaB):
             Vt = self.get_Vt(Vsb)
-            deltaV = np.log1p(np.exp(Vgs - Vt))
-            return u0 / (1 + theta * deltaV + thetaB*Vsb)
-        self.theta = 0
+            deltaV = Vgs - Vt
+            return u0 / (1 + (theta*deltaV) + (thetaB*Vsb))
         func = lambda Vsb, thetaB: ueff_from_thetaB(vgsfilter, Vsb, self.u0, self.theta, thetaB)
         # print(len(vsbs), len(ueffs))
         popt, pcov = curve_fit(func, vsbs, ueffs, bounds=[-100, 100])
@@ -333,8 +342,8 @@ class EKV_Model:
             plt.title("theta B fit")
             # plt.plot(vsbs, self.get_Vt(vsbs), label="VTs")
             plt.plot(vsbs, ueffs, label="scraped ueffs", linestyle='--')
-        
-            plt.plot(vsbs, func(vsbs, 0), label="ueffs from func")
+            # self.thetaB = 0
+            plt.plot(vsbs, func(vsbs, self.thetaB), label="ueffs from func")
             plt.legend()
             plt.show()
         
