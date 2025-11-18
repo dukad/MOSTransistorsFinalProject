@@ -12,6 +12,13 @@ from scipy.stats import linregress
 from scipy.optimize import curve_fit, minimize_scalar, brentq
 
 
+
+# Use a built-in colormap with many distinct colors
+colors = plt.cm.tab20.colors  # 20 distinct colors
+
+# Set the color cycle for all subsequent plots
+plt.rcParams['axes.prop_cycle'] = plt.cycler(color=colors)
+
 # Always true values
 Kn = 450e-6
 Na = 7e17 * 1e6 # cm^-3 to m^-3 
@@ -542,25 +549,26 @@ class EKV_Model:
                 mask_vgs = self.idvd_data[:, VGSID] == vgs
                 mask = mask_vgs & mask_vsb
                 ##### plot reference data
-                if reference:
-                    axs[0, i].plot(
-                        self.idvd_data[mask][:, VDSID],
-                        self.idvd_data[mask][:, IDSID],
-                        label=f"Ref VGS: {vgs}",
-                        linestyle = '--'
+                if len(self.idvd_data[mask][:, IDSID]) > 0:
+                    if reference:
+                        axs[0, i].plot(
+                            self.idvd_data[mask][:, VDSID],
+                            self.idvd_data[mask][:, IDSID],
+                            label=f"Ref VGS: {vgs}",
+                            linestyle = '--'
+                        )
+                    ###### plot model data
+                    if model:
+                        axs[0, i].plot(
+                            vds_array,
+                            self.model(vgs + vsb, vsb, vdb_array),
+                            label=f"VGS: {vgs}"
                     )
-                ###### plot model data
-                if model:
-                    axs[0, i].plot(
-                        vds_array,
-                        self.model(vgs + vsb, vsb, vdb_array),
-                        label=f"VGS: {vgs}"
-                    )
-            axs[0, i].legend(
-                loc="center left",
-                bbox_to_anchor=(1.02, 0.5),
-                borderaxespad=0,
-            )
+            # axs[0, i].legend(
+            #     loc="center left",
+            #     bbox_to_anchor=(1.02, 0.5),
+            #     borderaxespad=0,
+            # )
             axs[0, i].set_title(f"IDS / VDS Curves for VSB = {vsb}")
 
         ############# PLOTTING ID VGS ###################
@@ -576,20 +584,21 @@ class EKV_Model:
                 vgb_array = vgs_array + vsb
                 mask_vsb = self.idvg_data[:, VSBID] == vsb
                 mask = mask_vds & mask_vsb
-                if reference:
-                    axs[1, i].plot(
-                        self.idvg_data[mask][:, VGSID],
-                        self.idvg_data[mask][:, IDSID],
-                        label=f"Ref VDS: {vds}",
-                        linestyle = '--'
-                    )
-                ### model data ######
-                if model:
-                    axs[1, i].plot(
-                        vgs_array,
-                        self.model(vgb_array, vsb, vds + vsb),
-                        label=f"VSB: {vsb}"
-                    )
+                if len(self.idvg_data[mask][:, IDSID]) > 0:
+                    if reference:
+                        axs[1, i].plot(
+                            self.idvg_data[mask][:, VGSID],
+                            self.idvg_data[mask][:, IDSID],
+                            label=f"Ref VDS: {vds}",
+                            linestyle = '--'
+                        )
+                    ### model data ######
+                    if model:
+                        axs[1, i].plot(
+                            vgs_array,
+                            self.model(vgb_array, vsb, vds + vsb),
+                            label=f"VSB: {vsb}"
+                        )
             axs[1, i].legend(
                 loc="center left",
                 bbox_to_anchor=(1.02, 0.5),
