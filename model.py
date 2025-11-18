@@ -1104,42 +1104,40 @@ class EKV_Model:
 
 
 
-    def gm_over_ID_sweep(self, VSB_vals=[0.0], VGS_min=0, VGS_max=1.5, n_points=1000, VDS=0.05):
+    def gO(self):
         """
-        Sweep VGS finely from weak to strong inversion and plot gm/ID curves.
+        Compute and plot gm/ID vs IDS for a single VSB and VDS.
         """
-        VGS_vals = np.linspace(VGS_min, VGS_max, n_points)
-
+        VSB= 0
+        VDS_val = np.linspace(0, 3, 500)
+        VGS_val = np.linspace(1, 4, 5)
         plt.figure(figsize=(8,6))
-        for VSB in VSB_vals:
-            IDS = np.array([self.model(VGS, VSB, VDS) for VGS in VGS_vals])
-            gm = np.gradient(IDS, VGS_vals)
-            gm_over_ID = gm / (IDS + 1e-30) 
-            plt.semilogx(IDS, gm_over_ID, label=f"VSB={VSB:.2f} V", alpha=0.8)
-
+        for VGS in VGS_val:
+            IDS = np.array([self.model(VGS+VSB, VSB, VDS+VSB) for VDS in VDS_val])
+            gO = np.gradient(IDS,VDS_val)
+            plt.plot(VDS_val, gO, label='gm/ID')
         plt.xlabel("IDS (A)")
-        plt.ylabel("gm / IDS (1/V)")
-        plt.title("Transconductance efficiency gm/ID vs IDS")
+        plt.ylabel("gm / ID (1/V)")
+        plt.title(f"Transconductance ")
         plt.grid(True, which="both")
         plt.legend()
         plt.tight_layout()
         plt.show()
 
-        return VGS_vals, IDS, gm, gm_over_ID
 
 
-    def Conductance_tests(self, VSB=0.0, VDS=0.5, VGS_min=0.2, VGS_max=1.2, n_points=500):
+    def Conductance_tests(self, VDS=0.5, VGS_min=.5, VGS_max=1.2, n_points=500):
         """
         Compute and plot gm/ID vs IDS for a single VSB and VDS.
         """
+        VSB_val = np.linspace(0, 1.2, 6)
         VGS_vals = np.linspace(VGS_min, VGS_max, n_points)
-        IDS = np.array([self.model(vgs, VSB, VDS) for vgs in VGS_vals])
-        gm = np.gradient(IDS, VGS_vals)
-        gm_over_ID = gm / (IDS + 1e-30)
-
-        mask = IDS > 1e-12
-        plt.figure(figsize=(7,5))
-        plt.semilogx(IDS[mask], gm_over_ID[mask], label='gm/ID')
+        plt.figure(figsize=(8,6))
+        for VSB in VSB_val:
+            IDS = np.array([self.model(vgs+VSB, VSB, VDS+VSB) for vgs in VGS_vals])
+            gm = np.gradient(IDS, VGS_vals)
+            gm_over_ID = gm / (IDS)
+            plt.semilogx(IDS, gm_over_ID, label='gm/ID')
         plt.xlabel("IDS (A)")
         plt.ylabel("gm / ID (1/V)")
         plt.title(f"Transconductance efficiency gm/ID vs IDS at VDS={VDS} V, VSB={VSB} V")
@@ -1147,7 +1145,5 @@ class EKV_Model:
         plt.legend()
         plt.tight_layout()
         plt.show()
-
-        return VGS_vals, IDS, gm, gm_over_ID
 
         
