@@ -75,10 +75,12 @@ class EKV_Model:
         self.vsat = 9e4 #6×10⁴ → 9×10⁴ m/s
         self.lambda_par = 0
         self.vsat = np.inf
-        self.scale = 0
-        self.l_vgs = 0
-        self.l_vsb = 0
-        self.l_vsb2 = 0
+        self.A = 0
+        self.B = 0
+        self.C = 0
+        self.D = 0
+        self.E = 0
+        self.F = 0
     
     # kappa and Io extraction
     def extract_kappa_I0(self, vsb_val, window_size=7):
@@ -399,8 +401,8 @@ class EKV_Model:
             dibl = -(vt_high_vds - vt_low_vds) / voltage_diff
             dibls.append(dibl)
 
-        # self.dibl = -np.average(dibls)
-        self.dibl = dibls[0]
+        self.dibl = np.average(dibls)
+        # self.dibl = dibls[0]
         # self.dibl = 0
         self.vds_ref = Vdss[1]
 
@@ -479,7 +481,7 @@ class EKV_Model:
         
         vt0 = self.VFB + self.phi0 + self.gamma*np.sqrt(self.phi0)
         Vt = vt0 + self.gamma*(np.sqrt(self.phi0 + Vsb) - np.sqrt(self.phi0))
-        
+        # Vt = Vt - self.dibl*(Vds/self.vds_ref)
         return Vt
 
     def VDSsat_EKV(self, Isat, Is, A=0.8):
@@ -504,17 +506,17 @@ class EKV_Model:
          # After fitting gamma in fit_Vts():
         self.extract_all_kappas_IOs() # this creates self.kappas
         self.fit_Is()
-        for i in range(50):
-            self.fit_Vsat()
-            self.fit_lambdas()
-            
-
         
-        # self.fit_lambda()
+        self.fit_lambdas()
+        self.fit_Vsat()
+        
         
         
     def get_ueff(self, Vgs, Vsb, Vds):
-        return self.u0 / (1 + (self.theta * (Vgs- self.get_Vt(Vsb, Vds))) + (self.thetaB*Vsb))
+        ueff = self.u0
+        E = Vds / self.L
+        ueff = (ueff) / (1 + (ueff*E / self.vsat))
+        return ueff / (1 + (self.theta * (Vgs- self.get_Vt(Vsb, Vds))) + (self.thetaB*Vsb))
     
     def lambda_model(self, VGB, VSB, VDB):
         Vgs = VGB - VSB
@@ -558,8 +560,6 @@ class EKV_Model:
         mask = mask & mask2
         ID = self.idvd_data[:, IDSID][mask]
         VDS = self.idvd_data[:, VDSID][mask]
-        print(ID)
-        print(VDS)
         def fit_func(VDS, vsat):
             self.vsat = vsat
             id = self.model(vgs + vsb, vsb, VDS + vsb)
@@ -570,26 +570,113 @@ class EKV_Model:
         self.vsat = popt[0]
         print(self.vsat)
         
-    def fit_lambda(self, vgs, vsb):
-        mask = self.idvd_data[:, VGSID] == vgs
-        mask2 = self.idvd_data[:, VSBID] == vsb
-        mask = mask & mask2
-        ID = self.idvd_data[:, IDSID][mask]
-        VDS = self.idvd_data[:, VDSID][mask]
+    def fit_lambda(self, vgs, vsb, plot=False):
+        """
+        Fit lambda for a single (vgs, vsb) sweep using ONLY the last N highest-VDS points.
+        Optionally plot ID vs VDS, the linear fit, and the tangent at VDS=0.
+        """
+        import numpy as np
+        try:
+            import matplotlib.pyplot as plt
+        except Exception:
+            plt = None
 
-        def fit_func(VDS, lambda_par):
-            self.lambda_par = lambda_par
-            id = self.lambda_model(vgs + vsb, vsb, VDS + vsb)
-            return id
+        N_POINTS = 10  # number of highest-VDS points to use
 
-        popt, pcov = curve_fit(fit_func, VDS, ID, p0=[0.1], bounds=[0, np.inf])
+        # extract data for this bias condition
+        mask = (self.idvd_data[:, VGSID] == vgs) & (self.idvd_data[:, VSBID] == vsb)
+        ID = np.asarray(self.idvd_data[:, IDSID][mask], dtype=float)
+        VDS = np.asarray(self.idvd_data[:, VDSID][mask], dtype=float)
 
-        self.lambda_par = popt[0]
-        print(self.lambda_par)
+        # must have enough points
+        if ID.size < 2:
+            self.lambda_par = np.nan
+            return self.lambda_par
+
+        # remove NaN/inf
+        good = np.isfinite(ID) & np.isfinite(VDS)
+        ID = ID[good]
+        VDS = VDS[good]
+
+        if ID.size < 2:
+            self.lambda_par = np.nan
+            return self.lambda_par
+
+        # ---- SELECT LAST N HIGHEST-VDS POINTS ----
+        sort_idx = np.argsort(VDS)           # ascending VDS
+        idx_use = sort_idx[-N_POINTS:]       # last N points (or fewer if less available)
+        VDS_fit = VDS[idx_use]
+        ID_fit = ID[idx_use]
+
+        # need at least 2 points
+        if VDS_fit.size < 2:
+            self.lambda_par = np.nan
+            return self.lambda_par
+
+        # linear fit: ID = m*VDS + b
+        m, b = np.polyfit(VDS_fit, ID_fit, 1)
+        # vds = np.linspace(2,3,50)
+        # ueffs = self.get_ueff(vgs, vsb, vds)
+        # dueffs = np.gradient(ueffs, vds)
+        # slope = np.average(dueffs)
+        # # ueff = self.get_ueff(vgs, vsb, 0.0001) # without vsat 
+        # m = m + slope
+        # print(m)
+        # m = m - slope
+        # compute lambda
+        if np.isclose(b, 0.0):
+            self.lambda_par = np.nan
+        else:
+            self.lambda_par = float(m / b)
+
+        # ---- OPTIONAL PLOTTING ----
+        if plot and plt is not None:
+            try:
+                plt.figure()
+
+                # raw data
+                plt.scatter(VDS, ID, label="data", zorder=3)
+
+                # highlight the points used for fitting
+                plt.scatter(VDS_fit, ID_fit, color='red', label=f"last {VDS_fit.size} points", zorder=4)
+
+                # fitted line spanning the selected region only
+                vmin, vmax = np.min(VDS_fit), np.max(VDS_fit)
+                vds_plot = np.linspace(vmin, vmax, 200)
+                id_plot = m * vds_plot + b
+                plt.plot(vds_plot, id_plot, label="linear fit", zorder=2)
+
+                # tangent at VDS = 0 (b + m*VDS)
+                tan_span = 0.2 * (vmax - vmin if vmax > vmin else 1.0)
+                vds_tan = np.array([-tan_span/2, tan_span/2])
+                id_tan = b + m * vds_tan
+                plt.plot(vds_tan, id_tan, '--', linewidth=2, label="tangent at VDS=0", zorder=5)
+
+                # annotate λ
+                lambda_text = f"λ = {self.lambda_par:.4g}"
+                x_text = 0.0
+                y_text = b + m * x_text
+                plt.annotate(lambda_text, xy=(x_text, y_text),
+                            xytext=(x_text + 0.1*(vmax-vmin or 1.0), y_text),
+                            arrowprops=dict(arrowstyle="->", lw=0.8),
+                            bbox=dict(boxstyle="round,pad=0.3", fc="w", alpha=0.8))
+
+                plt.xlabel("VDS")
+                plt.ylabel("ID")
+                plt.title(f"Fit for VGS={vgs}, VSB={vsb}  →  λ={self.lambda_par:.4g}")
+                plt.grid(True)
+                plt.legend()
+                plt.tight_layout()
+                plt.show()
+
+            except Exception:
+                pass
+
         return self.lambda_par
 
-    def fit_lambdas(self, plot=False):
-        power = 2
+
+
+    def fit_lambdas(self, plot=True):
         unique_vgss = np.unique(self.idvd_data[:, VGSID])
         unique_vsbs = np.unique(self.idvd_data[:, VSBID])
         vds_vals = self.idvd_data[:, VDSID]
@@ -635,23 +722,28 @@ class EKV_Model:
             plt.legend()
             plt.show()
 
-        def fit_func_no_vsb(VGS, l_vsb, scale):
-            return scale / (1 + (VGS**power)*l_vsb)
+        def fit_func_no_vsb(VGS, A, B, C, F):
+            return A* ( 1+ B*VGS + F*VGS**2)/(1+ C*VGS)
         
         # curve fit
         print(vg_list)
         print(ls_results[0]['lambda'])
-        popt, pcov = curve_fit(fit_func_no_vsb, vg_list, ls_results[0]['lambda'], p0 = [1000000, 1000000])
+        popt, pcov = curve_fit(fit_func_no_vsb, vg_list, ls_results[0]['lambda'])
 
-        l_vgs = popt[0]
-        scale = popt[1]
+        A = popt[0]
+        B = popt[1]
+        C = popt[2]
+        F = popt[3]
 
-        self.l_vgs = l_vgs
-        self.scale = scale
+
+        self.A = A
+        self.B = B
+        self.C = C
+        self.F = F
 
         fit_vals = []
         for vg in vg_list:
-            fit_vals.append(fit_func_no_vsb(vg, l_vgs, scale))
+            fit_vals.append(fit_func_no_vsb(vg, A, B, C, F))
 
         if plot:
             plt.figure()
@@ -662,25 +754,24 @@ class EKV_Model:
             plt.legend()
             # plt.show()
 
-        
-        def fit_func_vsb(VGS, l_vsb, l_vsb2):
+        vg_list = ls_results[1]['vgs']
+        def fit_func_vsb(VGS, D, E):
             VSB = 3.0
-            return (scale* (1+l_vsb*VSB)) / (1 + (VGS**power)*l_vgs + l_vsb2*VSB)
+            return A* ( 1 + B*VGS +F*VGS**2  + D*VSB)/(1+ C*VGS)
     
+        print(ls_results)
         popt, pcov = curve_fit(fit_func_vsb, vg_list, ls_results[1]['lambda'])
 
-        l_vsb = popt[0]
-        l_vsb2 = popt[1]
-        print(l_vsb)
-        self.l_vsb = l_vsb
-        self.l_vsb2 = l_vsb2
+        D = popt[0]
+        E = popt[1]
+        self.D = D
+        print(f"D {D}")
+        self.E = E
         fit_vals = []
         for vg in vg_list:
-            fit_vals.append(fit_func_vsb(vg, l_vsb, l_vsb2))
+            fit_vals.append(fit_func_vsb(vg, D, E))
         if plot:
             # plt.figure()
-            print(scale)
-            print(l_vgs)
             plt.plot(vg_list, ls_results[1]['lambda'], marker='o', label=f"VSB={3.0}")
             plt.plot(vg_list, fit_vals, label=f'fit vsb= {3.0}')
             plt.title("Measured lambdas and their fit")
@@ -690,9 +781,8 @@ class EKV_Model:
             plt.show()
         
 
-    def get_lambda(self, vgs, vsb):
-        return (self.scale* (1+self.l_vsb*vsb)) / (1 + (vgs**2)*self.l_vgs + self.l_vsb2*vsb)
-
+    def get_lambda(self, VGS, VSB):
+        return self.A*( 1+  self.B*VGS +self.F*VGS**2 + self.D*VSB) /(1+ self.C*VGS)
 
     def model(self, VGB, VSB, VDB):
         """
@@ -709,9 +799,12 @@ class EKV_Model:
         # self.vsat = 1e6
         vt = self.get_Vt(VSB, VDB - VSB)
         ueff = self.get_ueff(Vgs, VSB, VDB - VSB)   # pass Vgs rather than VGB+VSB
-        E = Vds / self.L
-        ueff = ueff / (1 + ueff*E / self.vsat)
-        lam = self.get_lambda(Vgs, VSB)
+        
+
+
+
+
+        lam = self.get_lambda(Vgs, VSB) * 1.5
         ueff = ueff * (1 + lam*Vds)
 
         # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
@@ -1138,12 +1231,14 @@ class EKV_Model:
             gm = np.gradient(IDS, VGS_vals)
             gm_over_ID = gm / (IDS)
             plt.semilogx(IDS, gm_over_ID, label='gm/ID')
+
         plt.xlabel("IDS (A)")
         plt.ylabel("gm / ID (1/V)")
         plt.title(f"Transconductance efficiency gm/ID vs IDS at VDS={VDS} V, VSB={VSB} V")
         plt.grid(True, which="both")
         plt.legend()
         plt.tight_layout()
+        # plt.ylim(31, 34)
         plt.show()
 
         

@@ -19,9 +19,11 @@ length = float(filename.split("_")[1][1:]) * 1e-9
 
 mosfet = EKV_Model(idvg_data, idvd_data, width, length)
 mosfet.fit_all()
-# mosfet.plot(reference=True, model=True)
-# mosfet.plot_derivative(reference=True, model=True)
-mosfet.Gummel_Slope_Ratio()
-mosfet.Gummel_symmetry_test()
+mosfet.plot(reference=True, model=True)
+mosfet.plot_derivative(reference=True, model=True)
+# mosfet.Gummel_Slope_Ratio()
+# mosfet.Gummel_symmetry_test()
+# mosfet.Conductance_tests()
+# mosfet.gO()
 # mosfet.plot_kappa()
 
