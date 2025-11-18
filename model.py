@@ -65,17 +65,7 @@ class EKV_Model:
         self.e_ox = 3.45e-11
         self.Ut = phiT
         self.cox = 3.45e-11 / 10.5e-9 # eox/toc
-    # generic fitting function
-    def fit_parameter(self):
-        # 
-        self.parameter = 0 # obviously edit this #
-    
-    def filter_data(self, datafile):
-        '''Need to change this but a good starting point'''
-        self.vds = datafile["VDS"].values
-        self.ids = datafile["IDS"].values
-        self.vgs = datafile["VGS"].values
-        self.vsb = datafile["VSB"].values
+        self.vsat = 9e4 #6×10⁴ → 9×10⁴ m/s
     
     # kappa and Io extraction
     def extract_kappa_I0(self, vsb_val, window_size=7):
@@ -501,7 +491,9 @@ class EKV_Model:
         Vds = VDB + VSB
 
         vt = self.get_Vt(VSB)
-        ueff = self.get_ueff(Vgs, VSB)   # pass Vgs rather than VGB+VSB
+        ueff_old = self.get_ueff(Vgs, VSB)   # pass Vgs rather than VGB+VSB
+        v_over = abs(Vds) / self.L
+        ueff = ueff_old / (1 + v_over / self.vsat)
 
         # IS prefactor: 2 * ueff * Cox * (W/L) * Ut^2 / Kappa
         IS = 2 * ueff * Cox * (self.W / self.L) * (self.Ut ** 2) / self.Kappa
