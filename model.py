@@ -300,38 +300,6 @@ class EKV_Model:
         # self.Is = 5e-4
 
     def fit_Vt(self,vsb=0, vds=0.1,plot=False):
-        # load data from VGS sweeps where VSB = -
-        # mask = (self.idvg_data[:, VSBID] == vsb) & (self.idvg_data[:, VDSID] == vds)
-        # VGS = self.idvg_data[:, VGSID][mask]
-        # ID = self.idvg_data[:, IDSID][mask]
-        # # take data close to intercept
-        # # print(vsb)
-        # # print(ID)
-        # maxID = max(ID)
-        # minID = min(ID)
-        # diff = maxID - minID
-
-        # mask = (ID > 0.1*diff + minID) & (ID < 0.2*diff + minID)
-        # VGS_fit = VGS[mask]
-        # ID_fit = ID[mask]
-        # # linearize this line
-        # slope, intercept = np.polyfit(VGS_fit, ID_fit, 1)
-        # VGS_fit = np.linspace(0, 2.5, 100)
-        # ID_fit = slope * VGS_fit + intercept
-        # # print(f"slope: {slope}, intercept: {intercept}")
-        # # find index where ID = 0
-        # Vt = -intercept / slope
-
-        # if plot:
-        #     plt.figure()
-        #     plt.title(f"Vt Extrapolation for VSB = {vsb}")
-        #     plt.plot(VGS, ID, label="data")
-        #     plt.axvline(Vt, label="Vt0", color='red')
-        #     plt.plot()
-        #     plt.plot(VGS_fit, ID_fit, label='fitted data')
-        #     plt.legend()
-        #     plt.grid()
-        #     plt.show()
 
         """
         Extract Vt using maximum transconductance method
@@ -393,7 +361,7 @@ class EKV_Model:
             plt.show()
         return Vt
 
-    def fit_Vts(self, plot=False):
+    def fit_Vts(self, plot=True):
         # for now
         # loop through VSBs, at one given VDS (max VDS, arbitrary)
         # vds = 0.
@@ -492,8 +460,11 @@ class EKV_Model:
             plt.figure()
             plt.plot(vsbs, Vts, label="Vts", lw=5.0)
             plt.plot(vsbs, self.get_Vt(vsbs, Vdss[1]), label='fit')
+            plt.xlabel("VSB (V)")
+            plt.ylabel("VT (V)")
             plt.title("Fit VTs against reference VTs")
-            plt.figure()
+            # plt.figure()
+            plt.legend()
             plt.show()
             
         # print(f"VFB: {self.VFB:.6g} V")
@@ -617,7 +588,7 @@ class EKV_Model:
         print(self.lambda_par)
         return self.lambda_par
 
-    def fit_lambdas(self, plot=False):
+    def fit_lambdas(self, plot=True):
         power = 2
         unique_vgss = np.unique(self.idvd_data[:, VGSID])
         unique_vsbs = np.unique(self.idvd_data[:, VSBID])
@@ -684,12 +655,12 @@ class EKV_Model:
 
         if plot:
             plt.figure()
-            print(scale)
-            print(l_vgs)
+            # print(scale)
+            # print(l_vgs)
             plt.plot(vg_list, ls_results[0]['lambda'], marker='o', label=f"VSB={0}")
             plt.plot(vg_list, fit_vals, label='fit')
             plt.legend()
-            plt.show()
+            # plt.show()
 
         
         def fit_func_vsb(VGS, l_vsb, l_vsb2):
@@ -707,11 +678,14 @@ class EKV_Model:
         for vg in vg_list:
             fit_vals.append(fit_func_vsb(vg, l_vsb, l_vsb2))
         if plot:
-            plt.figure()
+            # plt.figure()
             print(scale)
             print(l_vgs)
             plt.plot(vg_list, ls_results[1]['lambda'], marker='o', label=f"VSB={3.0}")
-            plt.plot(vg_list, fit_vals, label='fit')
+            plt.plot(vg_list, fit_vals, label=f'fit vsb= {3.0}')
+            plt.title("Measured lambdas and their fit")
+            plt.xlabel("VGS")
+            plt.ylabel("lambda")
             plt.legend()
             plt.show()
         
