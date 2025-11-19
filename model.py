@@ -1115,35 +1115,58 @@ class EKV_Model:
         for VGS in VGS_val:
             IDS = np.array([self.model(VGS+VSB, VSB, VDS+VSB) for VDS in VDS_val])
             gO = np.gradient(IDS,VDS_val)
-            plt.plot(VDS_val, gO, label='gm/ID')
-        plt.xlabel("IDS (A)")
-        plt.ylabel("gm / ID (1/V)")
-        plt.title(f"Transconductance ")
-        plt.grid(True, which="both")
+            plt.plot(VDS_val, gO)
+        plt.xlabel("VDS (V)")
+        plt.ylabel("gO (mS)")
+        plt.title(f"Output Conductance")
+        plt.grid(True)
         plt.legend()
         plt.tight_layout()
         plt.show()
 
 
 
-    def Conductance_tests(self, VDS=0.5, VGS_min=.5, VGS_max=1.2, n_points=500):
-        """
-        Compute and plot gm/ID vs IDS for a single VSB and VDS.
-        """
+    def Conductance_tests2(self):
+        VDS = 3
         VSB_val = np.linspace(0, 1.2, 6)
-        VGS_vals = np.linspace(VGS_min, VGS_max, n_points)
-        plt.figure(figsize=(8,6))
+        VGS_val = np.linspace(.5, 6, 1000)
+
         for VSB in VSB_val:
-            IDS = np.array([self.model(vgs+VSB, VSB, VDS+VSB) for vgs in VGS_vals])
-            gm = np.gradient(IDS, VGS_vals)
-            gm_over_ID = gm / (IDS)
-            plt.semilogx(IDS, gm_over_ID, label='gm/ID')
+            IDS = np.array(self.model(VGS_val, VSB, VDS))
+            gm = np.gradient(IDS, VGS_val)
+            print(gm)
+            gm_over_ID = gm / (IDS + 1e-30)  # avoid divide by zero
+            plt.semilogx(IDS, gm_over_ID, label=f'VSB={VSB:.2f} V')
+
         plt.xlabel("IDS (A)")
         plt.ylabel("gm / ID (1/V)")
-        plt.title(f"Transconductance efficiency gm/ID vs IDS at VDS={VDS} V, VSB={VSB} V")
-        plt.grid(True, which="both")
+        plt.title(f"Transconductance gm/ID vs IDS at VDS={VDS} V")
+        plt.grid(True)
         plt.legend()
         plt.tight_layout()
         plt.show()
 
+    def Conductance_tests(self):
+
+        VDS = 0.05
+        VSB_vals = [0.0, 7,15]
+        VGS_vals = np.linspace(0.0, 2.0, 1000)  # wider sweep into moderate inversion
+
+        plt.figure()
+        for VSB in VSB_vals:
+            IDS = np.array(self.model(VGS_vals, VSB, VDS))
+            gm = np.diff(IDS) / np.diff(VGS_vals)
+            IDS_mid = (IDS[:-1] + IDS[1:]) / 2
+            gm_over_ID = gm / (IDS_mid + 1e-30)
+
+            # Plot only for IDS above a tiny floor for clarity
+            mask = IDS_mid > 1e-12
+            plt.semilogx(IDS_mid[mask], gm_over_ID[mask], label=f"VSB={VSB} V")
+
+        plt.xlabel("IDS (A)")
+        plt.ylabel("gm / ID (1/V)")
+        plt.title("Weak Inversion Test: gm/ID vs IDS")
+        plt.grid(True)
+        plt.legend()
+        plt.show()
         
